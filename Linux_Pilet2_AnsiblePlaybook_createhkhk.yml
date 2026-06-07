@@ -1,10 +1,8 @@
-Ansible abil alma ja debian serveritesse kasutajate loomin ehk create_hkhk.yml
-
 ---
 - name: Loo kasutaja hkhk AlmaServerisse ja DebianServerisse
   hosts: linux_servers
   become: yes
- 
+
   tasks:
     - name: Loo kasutaja hkhk
       user:
@@ -12,21 +10,21 @@ Ansible abil alma ja debian serveritesse kasutajate loomin ehk create_hkhk.yml
         shell: /bin/bash
         create_home: yes
         state: present
- 
+
     - name: Lisa hkhk sudo gruppi Debian/Ubuntu masinates
       user:
         name: hkhk
         groups: sudo
         append: yes
       when: ansible_os_family == "Debian"
- 
+
     - name: Lisa hkhk wheel gruppi AlmaLinux/RHEL masinates
       user:
         name: hkhk
         groups: wheel
         append: yes
       when: ansible_os_family == "RedHat"
- 
+
     - name: Loo hkhk kasutajale .ssh kaust
       file:
         path: /home/hkhk/.ssh
@@ -40,5 +38,3 @@ Ansible abil alma ja debian serveritesse kasutajate loomin ehk create_hkhk.yml
         user: hkhk
         state: present
         key: "{{ lookup('file', lookup('env','HOME') + '/.ssh/id_ed25519.pub') }}"
-
-
