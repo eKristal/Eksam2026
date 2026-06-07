@@ -1,0 +1,164 @@
+Import-Module ActiveDirectory
+
+# CSV faili asukoht
+$csvPath = "C:\Users\Administrator\Desktop\Skript\kasutajad.csv"
+
+# Domeeni andmed
+$domain = "ekristal.local"
+$domainDN = "DC=ekristal,DC=local"
+
+# Baas-OU
+$baseOUName = "Kasutajad"
+$baseOUDN = "OU=$baseOUName,$domainDN"
+
+Write-Host ""
+Write-Host "=== AD KASUTAJATE IMPORT ALGAS ===" -ForegroundColor Cyan
+
+# Kontrolli, kas CSV fail on olemas
+if (-not (Test-Path $csvPath)) {
+    Write-Host "VIGA: CSV faili ei leitud: $csvPath" -ForegroundColor Red
+    exit
+}
+
+# Loe esimene rida ja tuvasta eraldaja
+$firstLine = Get-Content -Path $csvPath -TotalCount 1
+
+if ($firstLine -like "*;*") {
+    $delimiter = ";"
+}
+else {
+    $delimiter = ","
+}
+
+Write-Host "Tuvastatud CSV eraldaja: $delimiter" -ForegroundColor Green
+
+# Loe CSV sisse
+$users = Import-Csv -Path $csvPath -Delimiter $delimiter -Encoding UTF8
+
+if (-not $users) {
+    Write-Host "VIGA: CSV fail on tühi või seda ei õnnestunud lugeda." -ForegroundColor Red
+    exit
+}
+
+Write-Host "CSV-st loetud ridu: $($users.Count)" -ForegroundColor Green
+
+Write-Host "CSV veerud:" -ForegroundColor Cyan
+$users[0].PSObject.Properties.Name | ForEach-Object {
+    Write-Host "- $_"
+}
+
+# Kontrolli, kas OU=Kasutajad on olemas
+$baseOUExists = Get-ADOrganizationalUnit `
+    -LDAPFilter "(ou=$baseOUName)" `
+    -SearchBase $domainDN `
+    -SearchScope OneLevel `
+    -ErrorAction SilentlyContinue
+
+if (-not $baseOUExists) {
+    Write-Host "Loon baas-OU: $baseOUDN" -ForegroundColor Yellow
+
+    New-ADOrganizationalUnit `
+        -Name $baseOUName `
+        -Path $domainDN `
+        -ProtectedFromAccidentalDeletion $false
+}
+else {
+    Write-Host "Baas-OU olemas: $baseOUDN" -ForegroundColor Green
+}
+
+foreach ($u in $users) {
+
+    # Loeb väärtused CSV veergudest Name, Username, Password, OU
+    $name = [string]$u.Name
+    $username = [string]$u.Username
+    $password = [string]$u.Password
+    $ouName = [string]$u.OU
+
+    $name = $name.Trim()
+    $username = $username.Trim()
+    $password = $password.Trim()
+    $ouName = $ouName.Trim()
+
+    Write-Host ""
+    Write-Host "Töötlen: $name | $username | $ouName" -ForegroundColor Cyan
+
+    if (
+        [string]::IsNullOrWhiteSpace($name) -or
+        [string]::IsNullOrWhiteSpace($username) -or
+        [string]::IsNullOrWhiteSpace($password) -or
+        [string]::IsNullOrWhiteSpace($ouName)
+    ) {
+        Write-Host "JÄETI VAHELE: puudub Name, Username, Password või OU." -ForegroundColor Yellow
+        continue
+    }
+
+    # Eesnimi ja perekonnanimi
+    $nameParts = $name -split "\s+"
+
+    $firstName = $nameParts[0]
+    $lastName = $nameParts[-1]
+
+    # Osakonna OU DN
+    $targetOUDN = "OU=$ouName,$baseOUDN"
+
+    # Kontrolli, kas osakonna OU on olemas
+    $ouExists = Get-ADOrganizationalUnit `
+        -LDAPFilter "(ou=$ouName)" `
+        -SearchBase $baseOUDN `
+        -SearchScope OneLevel `
+        -ErrorAction SilentlyContinue
+
+    if (-not $ouExists) {
+        Write-Host "Loon OU: $targetOUDN" -ForegroundColor Yellow
+
+        New-ADOrganizationalUnit `
+            -Name $ouName `
+            -Path $baseOUDN `
+            -ProtectedFromAccidentalDeletion $false
+    }
+    else {
+        Write-Host "OU olemas: $targetOUDN" -ForegroundColor Green
+    }
+
+    # Kontrolli, kas kasutaja on juba olemas
+    $existingUser = Get-ADUser `
+        -Filter "SamAccountName -eq '$username'" `
+        -ErrorAction SilentlyContinue
+
+    if ($existingUser) {
+        Write-Host "Kasutaja juba olemas: $username" -ForegroundColor Yellow
+        continue
+    }
+
+    # Loo kasutaja
+    try {
+        New-ADUser `
+            -Name $name `
+            -DisplayName $name `
+            -GivenName $firstName `
+            -Surname $lastName `
+            -SamAccountName $username `
+            -UserPrincipalName "$username@$domain" `
+            -Path $targetOUDN `
+            -AccountPassword (ConvertTo-SecureString $password -AsPlainText -Force) `
+            -Enabled $true `
+            -PasswordNeverExpires $true `
+            -ChangePasswordAtLogon $false
+
+        Write-Host "OK: loodud kasutaja $username OU-sse $targetOUDN" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "VIGA kasutaja loomisel: $name / $username" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
+    }
+}
+
+Write-Host ""
+Write-Host "=== IMPORT LÕPETATUD ===" -ForegroundColor Green
+
+Write-Host ""
+Write-Host "Kontroll - kasutajad OU=Kasutajad all:" -ForegroundColor Cyan
+
+Get-ADUser -Filter * -SearchBase $baseOUDN -Properties DistinguishedName |
+    Select-Object Name, SamAccountName, DistinguishedName |
+    Format-Table -AutoSize
