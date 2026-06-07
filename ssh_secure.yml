@@ -1,0 +1,44 @@
+
+ ---
+ - name: Turva SSH seadistus Linux serverites
+   hosts: linux_servers
+   become: yes
+
+   tasks:
+     - name: Keela root kasutaja SSH login
+       lineinfile:
+         path: /etc/ssh/sshd_config
+         regexp: '^#?PermitRootLogin'
+         line: 'PermitRootLogin no'
+         backup: yes
+
+     - name: Keela parooliga SSH login
+       lineinfile:
+         path: /etc/ssh/sshd_config
+         regexp: '^#?PasswordAuthentication'
+         line: 'PasswordAuthentication no'
+         backup: yes
+
+     - name: Luba SSH võtmega login
+       lineinfile:
+         path: /etc/ssh/sshd_config
+         regexp: '^#?PubkeyAuthentication'
+         line: 'PubkeyAuthentication yes'
+         backup: yes
+
+     - name: Kontrolli SSH konfiguratsiooni
+       command: sshd -t
+       changed_when: false
+
+     - name: Taaskäivita SSH Debian/Ubuntu masinas
+       service:
+         name: ssh
+         state: restarted
+       when: ansible_os_family == "Debian"
+
+     - name: Taaskäivita SSH AlmaLinux/RHEL masinas
+       service:
+         name: sshd
+         state: restarted
+       when: ansible_os_family == "RedHat"
+
